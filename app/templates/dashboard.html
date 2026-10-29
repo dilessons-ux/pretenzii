@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Показатели{% endblock %}
+{% block content %}
+<h1>Показатели за {{ days }} дней</h1>
+<p class="small">{% for d in (30, 90, 365) %}<a href="?days={{d}}" {% if d==days %}class="b"{% endif %}>{{ d }} дн.</a> {% endfor %}</p>
+<div class="kpis">
+  <div class="kpi"><span>Претензий</span><b>{{ m.total }}</b><small>открыто {{ m.open }}</small></div>
+  <div class="kpi {% if m.on_time_pct is not none and m.on_time_pct < 100 %}bad{% endif %}"><span>Исполнено в срок</span><b>{{ m.on_time_pct if m.on_time_pct is not none else '—' }}{% if m.on_time_pct is not none %}%{% endif %}</b><small>цель 100%</small></div>
+  <div class="kpi {% if m.overdue_open %}bad{% endif %}"><span>Просрочено сейчас</span><b>{{ m.overdue_open }}</b></div>
+  <div class="kpi"><span>Медиана исполнения</span><b>{{ m.median_days if m.median_days is not none else '—' }}</b><small>дней</small></div>
+  <div class="kpi"><span>Довольны (4–5)</span><b>{{ m.csat_pct if m.csat_pct is not none else '—' }}{% if m.csat_pct is not none %}%{% endif %}</b><small>ответов {{ m.csat_n }}</small></div>
+  <div class="kpi"><span>Стоимость рекламаций</span><b>{{ m.cost_total|money }}</b><small>удержано {{ m.cost_charged|money }}</small></div>
+  <div class="kpi {% if m.penalties %}bad{% endif %}"><span>Неустойки (расчёт)</span><b>{{ m.penalties|money }}</b></div>
+</div>
+<div class="grid2">
+  <section class="card"><h2>Причины</h2>
+    {% set mx = (by_culprit[0][1] if by_culprit else 1) %}
+    {% for k, n in by_culprit %}<div class="bar"><span>{{ L.CULPRITS[k] }}</span><i style="width:{{ (100*n/mx)|round }}%"></i><b>{{ n }}</b></div>{% else %}<p class="muted">Нет данных</p>{% endfor %}
+  </section>
+  <section class="card"><h2>По сотрудникам (виновник)</h2>
+    {% for r in brig %}<div class="bar"><span>{{ r.name }}</span><i style="width:{{ (100*r.n/brig[0].n)|round }}%"></i><b>{{ r.n }}</b></div>{% else %}<p class="muted">Нет данных</p>{% endfor %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}{{ claim.number }}{% endblock %}
+{% block content %}
+{% set c = claim %}
+{% set manage = user.role in ('np','director','rop') %}
+<div class="head light-{{ light }}">
+  <div>
+    <h1>{{ c.number }} · {{ c.client_name }}</h1>
+    <span class="badge">{{ L.STATUSES[c.status] }}</span>
+    <span class="muted small">Принял {{ accepted_by.name }} · {{ c.accepted_at[:16] }}</span>
+  </div>
+</div>
+
+<div class="timers">
+  <div class="timer"><span>Рассмотреть до</span><b>{{ fmt(c.review_due) }}</b></div>
+  <div class="timer"><span>План исполнения</span><b>{{ fmt(c.plan_due) }}</b>{% if c.plan_days %}<small>{{ c.plan_days }} дн.</small>{% endif %}</div>
+  <div class="timer {% if c.status in L.OPEN_STATUSES and left < 0 %}bad{% endif %}">
+    <span>Юридический срок</span><b>{{ fmt(c.legal_due) }}</b>
+    <small>{% if c.status in L.OPEN_STATUSES %}{% if left < 0 %}просрочка {{ -left }} дн.{% else %}осталось {{ left }} дн.{% endif %}{% endif %}</small>
+  </div>
+  {% if c.original_legal_due != c.legal_due %}<div class="timer"><span>Первоначальный срок</span><b>{{ fmt(c.original_legal_due) }}</b><small>перенесён с согласия клиента</small></div>{% endif %}
+  {% if penalty[0] > 0 %}<div class="timer bad"><span>Неустойка</span><b>{{ penalty[1]|money }}</b><small>{{ penalty[0] }} дн. × {{ '3%' if c.contract_type=='podryad' else '1%' }}</small></div>{% endif %}
+</div>
+
+<section class="card">
+  <h2>Клиент и договор</h2>
+  <dl class="dl">
+    <dt>Телефон</dt><dd><a href="tel:{{ c.client_phone }}">{{ c.client_phone }}</a></dd>
+    <dt>Email</dt><dd>{{ c.client_email or '— (письма не уходят, сообщать по телефону)' }}</dd>
+    <dt>Адрес</dt><dd>{{ c.address or '—' }}</dd>
+    <dt>Договор</dt><dd>№ {{ c.contract_no }} от {{ fmt(c.contract_date) }} · {{ L.CONTRACT_TYPES[c.contract_type] }}{% if c.contract_price %} · {{ c.contract_price|money }}{% endif %}</dd>
+    <dt>Дата претензии</dt><dd>{{ fmt(c.received_at) }}</dd>
+    <dt>Требование</dt><dd>{{ L.DEMANDS[c.demand_type] }}</dd>
+    <dt>Описание</dt><dd class="pre">{{ c.description or '—' }}</dd>
+    {% if c.decision %}<dt>Решение</dt><dd class="pre">{{ c.decision }}</dd>{% endif %}
+    {% if c.culprit %}<dt>Виновник</dt><dd>{{ L.CULPRITS[c.culprit] }}</dd>{% endif %}
+    <dt>Ссылка клиента</dt><dd><input readonly value="{{ client_link }}" onclick="this.select()"></dd>
+  </dl>
+</section>
+
+{# ---------- ежедневная отметка ---------- #}
+{% if c.status in L.OPEN_STATUSES %}
+<section class="card accent">
+  <h2>Отметка за сегодня {% if checked_today %}<span class="ok small">✓ есть</span>{% endif %}</h2>
+  <form method="post" action="/claims/{{ c.id }}/checkin">
+    <textarea name="comment" rows="2" placeholder="Что сделано, какое решение принято"></textarea>
+    <div class="btns">
+      <button name="state" value="done" class="btn btn-primary">Сделано</button>
+      <button name="state" value="problem" class="btn btn-warn">Проблема</button>
+      <button name="state" value="help" class="btn">Нужна помощь</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+{# ---------- решение ---------- #}
+{% if manage and c.status in ('review','decided','escalated') %}
+<section class="card">
+  <h2>Рассмотрение и решение</h2>
+  <form method="post" action="/claims/{{ c.id }}/decision">
+    <label>Решение (что делаем) <textarea name="decision" rows="3" required>{{ c.decision or '' }}</textarea></label>
+    <div class="grid2">
+      <label>Виновник
+        <select name="culprit" required>{% for k, v in L.CULPRITS.items() %}<option value="{{k}}" {% if c.culprit==k %}selected{% endif %}>{{v}}</option>{% endfor %}</select>
+      </label>
+      <label>Конкретный сотрудник
+        <select name="culprit_user_id"><option value="">—</option>{% for s in staff if s.role in ('brigade','technolog','designer') %}<option value="{{s.id}}" {% if c.culprit_user_id==s.id %}selected{% endif %}>{{ s.name }} ({{ L.ROLES[s.role] }})</option>{% endfor %}</select>
+      </label>
+    </div>
+    <label>Дней на исполнение (от сегодня) <input type="number" name="plan_days" min="1" max="365" value="{{ c.plan_days or '' }}"></label>
+    <div class="btns">
+      <button name="action" value="accept" class="btn btn-primary">Принять в работу</button>
+      <button name="action" value="reject" class="btn btn-danger" onclick="return confirm('Мотивированный отказ? Клиент получит письмо.')">Отказать</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+{# ---------- перенос срока ---------- #}
+{% if user.role in ('np','director','rop','supply') and c.status in ('decided','in_work','escalated') %}
+<section class="card {% if c.plan_due and c.plan_due > c.legal_due %}warnbox{% endif %}">
+  <h2>Перенос срока (нужен материал с долгой поставкой)</h2>
+  {% if c.plan_due and c.plan_due > c.legal_due %}<p class="warn">План {{ fmt(c.plan_due) }} позже юридического срока {{ fmt(c.legal_due) }}. Без согласия клиента начисляется неустойка.</p>{% endif %}
+  <form method="post" action="/claims/{{ c.id }}/extension">
+    <label>Причина (что ждём, у кого) <textarea name="reason" rows="2" required></textarea></label>
+    <div class="grid2">
+      <label>Дата поставки <input type="date" name="supply_date"></label>
+      <label>Предлагаемый новый срок * <input type="date" name="proposed_due" required value="{{ c.plan_due or '' }}"></label>
+    </div>
+    <button class="btn btn-primary">Отправить клиенту запрос на согласие</button>
+  </form>
+</section>
+{% endif %}
+
+{# ---------- выполнение и закрытие ---------- #}
+{% if c.status in ('in_work','done') %}
+<section class="card">
+  <h2>Выполнение</h2>
+  <form method="post" action="/claims/{{ c.id }}/files" enctype="multipart/form-data" class="inline-form">
+    <select name="kind"><option value="after">Фото «после»</option><option value="act">Акт (подписанный)</option></select>
+    <input type="file" name="files" multiple accept="image/*,.pdf" capture="environment" required>
+    <button class="btn">Загрузить</button>
+  </form>
+  {% if c.status == 'in_work' %}
+  <form method="post" action="/claims/{{ c.id }}/done"><button class="btn btn-primary">Работы выполнены → запросить подтверждение клиента</button></form>
+  {% endif %}
+  {% if c.status == 'done' and not c.client_confirmed_at %}
+  <p class="muted">Ждём подтверждения клиента по ссылке. Если клиент подписал акт на месте:</p>
+  <form method="post" action="/claims/{{ c.id }}/client-confirm" class="inline-form">
+    <input type="hidden" name="how" value="подпись на акте">
+    <button class="btn">Клиент подписал акт</button>
+  </form>
+  {% endif %}
+  {% if c.client_confirmed_at %}<p class="ok">Клиент подтвердил {{ c.client_confirmed_at[:16] }}</p>{% endif %}
+</section>
+{% endif %}
+
+{% if user.role in ('np','director') and c.status not in ('review',) %}
+<section class="card">
+  <h2>Разбор причины</h2>
+  <form method="post" action="/claims/{{ c.id }}/rootcause">
+    <div class="grid2">
+      <label>Виновник
+        <select name="culprit" required>{% for k, v in L.CULPRITS.items() %}<option value="{{k}}" {% if c.culprit==k %}selected{% endif %}>{{v}}</option>{% endfor %}</select>
+      </label>
+      <label>Сотрудник
+        <select name="culprit_user_id"><option value="">—</option>{% for s in staff if s.role in ('brigade','technolog','designer') %}<option value="{{s.id}}" {% if c.culprit_user_id==s.id %}selected{% endif %}>{{ s.name }} ({{ L.ROLES[s.role] }})</option>{% endfor %}</select>
+      </label>
+    </div>
+    <label>Что сломалось <input name="rc_symptom" value="{{ c.rc_symptom or '' }}"></label>
+    <label>Почему возникло <input name="rc_cause" value="{{ c.rc_cause or '' }}"></label>
+    <label>Почему не поймали до сдачи <input name="rc_escape" value="{{ c.rc_escape or '' }}"></label>
+    <label>Что меняем, чтобы не повторилось <input name="rc_action" value="{{ c.rc_action or '' }}"></label>
+    <button class="btn">Сохранить разбор</button>
+  </form>
+</section>
+{% endif %}
+
+{% if user.role in ('np','director') and c.status == 'done' %}
+<section class="card">
+  {% if missing %}<p class="warn">Для закрытия не хватает: {{ missing|join(', ') }}</p>{% endif %}
+  <form method="post" action="/claims/{{ c.id }}/close"><button class="btn btn-primary" {% if missing %}disabled{% endif %}>Закрыть претензию</button></form>
+</section>
+{% endif %}
+
+{# ---------- затраты ---------- #}
+<section class="card" id="costs">
+  <h2>Стоимость рекламации</h2>
+  {% if costs %}
+  <table class="tbl">
+    <tr><th>Статья</th><th>Сумма</th><th>За чей счёт</th><th>Статус</th></tr>
+    {% for k in costs %}
+    <tr>
+      <td>{{ L.COST_KINDS[k.kind] }}{% if k.note %}<div class="muted small">{{ k.note }}</div>{% endif %}</td>
+      <td>{{ k.amount|money }}</td>
+      <td>{{ L.CHARGE_TO.get(k.charge_to, k.charge_to) }}{% if k.charge_name %}: {{ k.charge_name }}{% endif %}</td>
+      <td>
+        {% if k.approval == 'approved' %}<span class="ok">согласовано</span>
+        {% elif k.approval == 'rejected' %}<span class="red">отклонено</span>
+        {% else %}<span class="warn">{{ 'ждёт директора' if k.approval=='pending_director' else 'ждёт РОП' }}</span>
+          {% if (k.approval=='pending_director' and user.role=='director') or (k.approval=='pending_rop' and user.role in ('rop','director')) %}
+          <form method="post" action="/costs/{{ k.id }}/approve" class="inline-form">
+            <button name="ok" value="1" class="btn btn-sm btn-primary">Да</button><button name="ok" value="0" class="btn btn-sm">Нет</button>
+          </form>{% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p>Итого: <b>{{ total|money }}</b> · удерживается с виновных: <b>{{ charged|money }}</b></p>
+  {% endif %}
+  {% if user.role in ('np','director','rop','supply') %}
+  <details><summary>Добавить затрату</summary>
+  <form method="post" action="/claims/{{ c.id }}/cost">
+    <div class="grid2">
+      <label>Статья <select name="kind">{% for k, v in L.COST_KINDS.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}</select></label>
+      <label>Сумма, ₽ <input type="number" name="amount" min="1" step="1" required></label>
+    </div>
+    <div class="grid2">
+      <label>За чей счёт <select name="charge_to">{% for k, v in L.CHARGE_TO.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}</select></label>
+      <label>Сотрудник <select name="charge_user_id"><option value="">—</option>{% for s in staff if s.role in ('brigade','technolog','designer') %}<option value="{{s.id}}" {% if c.culprit_user_id==s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select></label>
+    </div>
+    <label>Комментарий <input name="note"></label>
+    <p class="hint">Компенсацию клиенту до {{ L.ROP_COMPENSATION_LIMIT|money }} согласует РОП, свыше — директор.</p>
+    <button class="btn">Добавить</button>
+  </form>
+  </details>
+  {% endif %}
+</section>
+
+{# ---------- файлы ---------- #}
+<section class="card">
+  <h2>Файлы</h2>
+  <div class="files">
+  {% for f in files %}
+    <a href="/files/{{ f.id }}" target="_blank" class="file">
+      {% if f.filename.lower().endswith(('.jpg','.jpeg','.png','.webp')) %}<img src="/files/{{ f.id }}" alt="">{% else %}<span class="ext">{{ f.filename.rsplit('.',1)[-1] }}</span>{% endif %}
+      <small>{{ {'scan':'Претензия','defect':'Дефект','after':'После','act':'Акт','other':'Прочее'}[f.kind] }}</small>
+    </a>
+  {% endfor %}
+  </div>
+  <form method="post" action="/claims/{{ c.id }}/files" enctype="multipart/form-data" class="inline-form">
+    <select name="kind"><option value="defect">Дефект</option><option value="other">Прочее (материалы проверки)</option><option value="scan">Претензия</option></select>
+    <input type="file" name="files" multiple required>
+    <button class="btn btn-sm">Загрузить</button>
+  </form>
+</section>
+
+{# ---------- участники ---------- #}
+<section class="card">
+  <h2>Участники</h2>
+  <ul class="plain">{% for p in ppl %}<li>{{ p.name }} — {{ L.ROLES[p.p_role] }}{% if not p.telegram_chat_id %} <span class="muted small">(без Telegram, напоминания на email)</span>{% endif %}</li>{% endfor %}</ul>
+  {% if manage %}
+  <form method="post" action="/claims/{{ c.id }}/participants" class="inline-form">
+    <select name="user_id">{% for s in staff %}<option value="{{s.id}}">{{ s.name }} ({{ L.ROLES[s.role] }})</option>{% endfor %}</select>
+    <button class="btn btn-sm">Добавить</button>
+  </form>
+  {% endif %}
+</section>
+
+{% if exts %}
+<section class="card">
+  <h2>Переносы срока</h2>
+  <table class="tbl">
+    <tr><th>Дата</th><th>Новый срок</th><th>Причина</th><th>Ответ клиента</th></tr>
+    {% for e in exts %}<tr><td>{{ e.created_at[:10] }}</td><td>{{ fmt(e.proposed_due) }}</td><td>{{ e.reason }}</td>
+      <td>{% if e.answer=='agree' %}<span class="ok">согласен {{ e.answered_at[:10] }}</span>{% elif e.answer=='disagree' %}<span class="red">не согласен</span>{% else %}ждём{% endif %}</td></tr>{% endfor %}
+  </table>
+</section>
+{% endif %}
+
+{% if c.csat %}
+<section class="card"><h2>Отзыв клиента</h2><p>Оценка {{ c.csat }}/5 · решено: {{ 'да' if c.csat_solved else 'нет' }}</p>{% if c.csat_comment %}<p class="pre">{{ c.csat_comment }}</p>{% endif %}</section>
+{% endif %}
+
+{% if user.role in ('np','director') %}
+<details class="card"><summary>Сменить статус вручную</summary>
+  <form method="post" action="/claims/{{ c.id }}/status">
+    <select name="status">{% for k, v in L.STATUSES.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}</select>
+    <input name="reason" placeholder="Причина (обязательно)" required>
+    <button class="btn btn-sm">Сменить</button>
+  </form>
+</details>
+{% endif %}
+
+<section class="card" id="log">
+  <h2>Журнал</h2>
+  <form method="post" action="/claims/{{ c.id }}/comment" class="inline-form">
+    <input name="text" placeholder="Комментарий, согласование, договорённость" required>
+    <button class="btn btn-sm">Добавить</button>
+  </form>
+  <ol class="log">
+  {% for e in log %}
+    <li class="{% if e.action.startswith('игнор') or 'просроч' in e.action or 'НЕ' in e.action %}log-bad{% endif %}">
+      <span class="muted small">{{ e.ts[:16] }} · {{ e.actor }}</span>
+      <div><b>{{ e.action }}</b>{% if e.field %} · {{ e.field }}{% endif %}
+        {% if e.old_value is not none or e.new_value is not none %}: {% if e.old_value %}<s>{{ e.old_value }}</s> → {% endif %}{{ e.new_value or '' }}{% endif %}</div>
+      {% if e.comment %}<div class="pre small">{{ e.comment }}</div>{% endif %}
+    </li>
+  {% endfor %}
+  </ol>
+  <p class="muted small">Записи журнала нельзя изменить или удалить.</p>
+</section>
+{% endblock %}

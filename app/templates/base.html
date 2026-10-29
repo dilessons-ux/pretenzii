@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{% block title %}Претензии{% endblock %} · Аригато</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{% if user %}
+<header class="top">
+  <a class="brand" href="/">Претензии</a>
+  <nav>
+    <a href="/claims/new" class="btn btn-primary btn-sm">+ Новая</a>
+    <a href="/?mine=1">Мои</a>
+    {% if user.role in ('director','np','rop') %}<a href="/dashboard">Показатели</a>{% endif %}
+    {% if user.role == 'director' %}<a href="/users">Сотрудники</a>{% endif %}
+    <a href="/profile">{{ user.name.split()[0] }}</a>
+  </nav>
+</header>
+{% endif %}
+<main class="wrap">
+  {% for kind, msg in flashes %}<div class="flash flash-{{ kind }}">{{ msg }}</div>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

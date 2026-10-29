@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Новая претензия{% endblock %}
+{% block content %}
+<h1>Новая претензия</h1>
+<form method="post" action="/claims/new" enctype="multipart/form-data" class="card">
+  <fieldset>
+    <legend>Документы</legend>
+    <label>Скан / фото претензии * <input type="file" name="scan" accept="image/*,.pdf" capture="environment" multiple required></label>
+    <label>Фото и видео дефектов <input type="file" name="defect" accept="image/*,video/*" multiple></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Клиент</legend>
+    <label>ФИО * <input name="client_name" required></label>
+    <div class="grid2">
+      <label>Телефон * <input name="client_phone" type="tel" required placeholder="+7"></label>
+      <label>Email <input name="client_email" type="email"></label>
+    </div>
+    <label>Адрес объекта <input name="address"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Договор</legend>
+    <div class="grid2">
+      <label>Номер договора * <input name="contract_no" required></label>
+      <label>Дата заключения * <input name="contract_date" type="date" required></label>
+    </div>
+    <div class="grid2">
+      <label>Тип договора *
+        <select name="contract_type" required>
+          {% for k, v in L.CONTRACT_TYPES.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Стоимость по договору, ₽ <input name="contract_price" type="number" min="0" step="1"></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Претензия</legend>
+    <div class="grid2">
+      <label>Дата претензии (когда клиент предъявил) * <input name="received_at" type="date" value="{{ today.isoformat() }}" required></label>
+      <label>Требование клиента *
+        <select name="demand_type" required>
+          {% for k, v in L.DEMANDS.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <p class="hint">От требования зависит срок: ремонт / переделка — {{ L.MAX_REPAIR_DAYS }} дней, деньги — {{ L.MONEY_DAYS }} дней.</p>
+    <label>Описание / комментарий <textarea name="description" rows="4" placeholder="Что именно не так, где, когда обнаружено"></textarea></label>
+    <p class="muted small">Принял: {{ user.name }}, время фиксируется автоматически.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Участники</legend>
+    <p class="hint">Начальник производства (владелец) и РОП добавляются автоматически.</p>
+    <div class="checks">
+      <b>Сборщики, устанавливавшие мебель</b>
+      {% for s in staff if s.role == 'brigade' %}<label class="inline"><input type="checkbox" name="brigade" value="{{s.id}}"> {{ s.name }}</label>{% else %}<span class="muted small">Нет сборщиков — добавьте в «Сотрудники»</span>{% endfor %}
+    </div>
+    <div class="checks">
+      <b>Дополнительно</b>
+      {% for s in staff if s.role in ('technolog','designer','supply') %}<label class="inline"><input type="checkbox" name="extra" value="{{s.id}}"> {{ s.name }} ({{ L.ROLES[s.role] }})</label>{% endfor %}
+    </div>
+  </fieldset>
+
+  <button class="btn btn-primary btn-lg">Зарегистрировать и разослать</button>
+</form>
+{% endblock %}

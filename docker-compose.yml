@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/srv/data          # база, файлы, журнал отправок — делать резервную копию этой папки
+    ports:
+      - "127.0.0.1:8000:8000"     # наружу только через nginx

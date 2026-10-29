@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Профиль{% endblock %}
+{% block content %}
+<h1>{{ user.name }}</h1>
+<p class="muted">{{ L.ROLES[user.role] }} · {{ user.email }}</p>
+<section class="card">
+  <h2>Telegram</h2>
+  {% if user.telegram_chat_id %}<p class="ok">Привязан. Напоминания приходят в Telegram.</p>
+  {% elif tg_link %}<p>Откройте ссылку на телефоне и нажмите «Start» — напоминания будут приходить в Telegram с кнопками.</p>
+    <p><a class="btn btn-primary" href="{{ tg_link }}">Привязать Telegram</a></p>
+  {% else %}<p class="muted">Бот ещё не настроен администратором. Напоминания приходят на email.</p>{% endif %}
+</section>
+<section class="card">
+  <h2>Сменить пароль</h2>
+  <form method="post" action="/profile/password">
+    <label>Текущий <input type="password" name="old" required></label>
+    <label>Новый (от 8 символов) <input type="password" name="new" minlength="8" required></label>
+    <button class="btn">Сменить</button>
+  </form>
+</section>
+<p><a href="/logout">Выйти</a></p>
+{% endblock %}

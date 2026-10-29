@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Претензия {{ claim.number }}{% endblock %}
+{% block content %}
+{% set c = claim %}
+<div class="card narrow">
+  <h1>Претензия {{ c.number }}</h1>
+  <p class="muted">Договор № {{ c.contract_no }} от {{ fmt(c.contract_date) }}</p>
+
+  {% set steps = [('Принята', true), ('Рассмотрена', c.status not in ('review',)), ('В работе', c.status in ('in_work','done','feedback','closed')), ('Выполнена', c.done_at is not none or c.status=='closed'), ('Закрыта', c.status=='closed')] %}
+  <ol class="steps">{% for name, ok in steps %}<li class="{{ 'ok' if ok else '' }}">{{ name }}</li>{% endfor %}</ol>
+
+  <dl class="dl">
+    <dt>Статус</dt><dd><b>{{ L.STATUSES[c.status] }}</b></dd>
+    {% if c.decision %}<dt>Решение</dt><dd class="pre">{{ c.decision }}</dd>{% endif %}
+    {% if c.plan_due and c.status not in ('rejected',) %}<dt>Плановая дата</dt><dd>{{ fmt(c.plan_due) }}</dd>{% endif %}
+    <dt>Срок исполнения</dt><dd>{{ fmt(c.legal_due) }}</dd>
+  </dl>
+
+  {% if ext and not ext.answer and c.status == 'waiting_consent' %}
+  <div class="warnbox card">
+    <h2>Просим согласовать новый срок</h2>
+    <p>{{ ext.reason }}</p>
+    {% if ext.supply_date %}<p>Ожидаемая поставка: {{ fmt(ext.supply_date) }}</p>{% endif %}
+    <p>Новый срок: <b>{{ fmt(ext.proposed_due) }}</b> (сейчас {{ fmt(c.legal_due) }})</p>
+    <form method="post" action="/c/{{ token }}/extension/{{ ext.id }}" class="btns">
+      <button name="answer" value="agree" class="btn btn-primary">Согласен с новым сроком</button>
+      <button name="answer" value="disagree" class="btn">Не согласен</button>
+    </form>
+    <p class="muted small">Если не согласны — мы свяжемся с вами и предложим варианты.</p>
+  </div>
+  {% elif ext and ext.answer %}
+  <p class="muted">Ваш ответ по сроку: {{ 'согласие' if ext.answer=='agree' else 'не согласны' }} ({{ fmt(ext.answered_at) }}).</p>
+  {% endif %}
+
+  {% if after %}
+  <h2>Фото выполненных работ</h2>
+  <div class="files">{% for f in after %}<a class="file" href="/c/{{ token }}/file/{{ f.id }}" target="_blank"><img src="/c/{{ token }}/file/{{ f.id }}" alt=""></a>{% endfor %}</div>
+  {% endif %}
+
+  {% if c.status == 'done' and not c.client_confirmed_at %}
+  <div class="card accent">
+    <h2>Подтвердите результат</h2>
+    <form method="post" action="/c/{{ token }}/confirm">
+      <textarea name="comment" rows="2" placeholder="Если что-то не так — опишите"></textarea>
+      <div class="btns">
+        <button name="ok" value="1" class="btn btn-primary">Работы выполнены, претензий нет</button>
+        <button name="ok" value="0" class="btn">Недостаток не устранён</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if c.client_confirmed_at and not (c.csat_at and c.csat_at >= c.client_confirmed_at) %}
+  <div class="card">
+    <h2>Оцените решение</h2>
+    <form method="post" action="/c/{{ token }}/survey">
+      <p>Насколько вы довольны решением?</p>
+      <div class="stars">{% for i in range(1,6) %}<label><input type="radio" name="csat" value="{{i}}" required> {{ i }}</label>{% endfor %}</div>
+      <p>Проблема решена?</p>
+      <div class="btns"><label class="inline"><input type="radio" name="solved" value="1" required> Да</label><label class="inline"><input type="radio" name="solved" value="0"> Нет</label></div>
+      <textarea name="comment" rows="2" placeholder="Комментарий (необязательно)"></textarea>
+      <button class="btn btn-primary">Отправить</button>
+    </form>
+  </div>
+  {% elif c.client_confirmed_at %}<p class="ok">Спасибо за отзыв!</p>{% endif %}
+</div>
+{% endblock %}

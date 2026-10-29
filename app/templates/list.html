@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<form class="filters" method="get">
+  <select name="status" onchange="this.form.submit()">
+    <option value="open" {% if status=='open' %}selected{% endif %}>Открытые</option>
+    <option value="all" {% if status=='all' %}selected{% endif %}>Все</option>
+    {% for k, v in L.STATUSES.items() %}<option value="{{k}}" {% if status==k %}selected{% endif %}>{{v}}</option>{% endfor %}
+  </select>
+  <label class="inline"><input type="checkbox" name="mine" value="1" {% if mine %}checked{% endif %} onchange="this.form.submit()"> мои</label>
+  <input type="search" name="q" value="{{q}}" placeholder="Номер, клиент, договор, телефон">
+</form>
+
+{% if not items %}<p class="muted">Претензий нет.</p>{% endif %}
+<div class="list">
+{% for it in items %}{% set c = it.c %}
+  <a class="row light-{{ it.light }}" href="/claims/{{ c.id }}">
+    <div class="row-main">
+      <b>{{ c.number }}</b> · {{ c.client_name }}
+      <div class="muted small">Договор {{ c.contract_no }} · {{ L.DEMANDS[c.demand_type] }}</div>
+    </div>
+    <div class="row-side">
+      <span class="badge">{{ L.STATUSES[c.status] }}</span>
+      <div class="small">
+        {% if c.status in L.OPEN_STATUSES %}
+          {% if it.left < 0 %}<b class="red">просрочка {{ -it.left }} дн.</b>{% else %}срок {{ fmt(c.legal_due) }} · {{ it.left }} дн.{% endif %}
+        {% else %}{{ fmt(c.closed_at or c.done_at) }}{% endif %}
+      </div>
+    </div>
+  </a>
+{% endfor %}
+</div>
+{% if user.role in ('director','np','rop') %}<p class="small"><a href="/export.csv">Выгрузить в CSV (Excel)</a></p>{% endif %}
+{% endblock %}
