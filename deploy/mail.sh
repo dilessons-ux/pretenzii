@@ -33,11 +33,16 @@ try:
 except Exception as e:
     print("ОШИБКА подключения:", e); sys.exit(1)
 PYEOF
-set_env() { grep -q "^$1=" "$ENV" && sed -i "s|^$1=.*|$1=$2|" "$ENV" || echo "$1=$2" >> "$ENV"; }
-set_env SMTP_HOST "$HOST"
-set_env SMTP_PORT 465
-set_env SMTP_USER "$ADDR"
-set_env SMTP_PASSWORD "$PASS"
-set_env SMTP_FROM "Мебель Аригато <$ADDR>"
+export ENV
+$PY - <<'PYEOF'
+import os
+env = os.environ["ENV"]; a = os.environ["ADDR"]
+vals = {"SMTP_HOST": os.environ["HOST"], "SMTP_PORT": "465", "SMTP_USER": a,
+        "SMTP_PASSWORD": os.environ["PASS"], "SMTP_FROM": f"Мебель Аригато <{a}>"}
+q = lambda v: '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+lines = [l for l in open(env, encoding="utf-8").read().splitlines() if l.split("=", 1)[0] not in vals]
+lines += [f"{k}={q(v)}" for k, v in vals.items()]
+open(env, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PYEOF
 systemctl restart pretenzii
 echo "=== Почта $ADDR подключена ==="
