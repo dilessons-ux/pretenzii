@@ -2,18 +2,35 @@
 {% block title %}Сотрудники{% endblock %}
 {% block content %}
 <h1>Сотрудники</h1>
+{% if not tg_bot %}<div class="flash flash-warn">Telegram-бот ещё не подключён — уведомления сотрудникам не уходят. Подключение: одна команда на сервере (см. инструкцию).</div>{% endif %}
 <section class="card">
   <table class="tbl">
-    <tr><th>Имя</th><th>Роль</th><th>Email</th><th>Telegram</th><th></th></tr>
+    <tr><th>Сотрудник</th><th>Вход</th><th>Telegram</th><th></th></tr>
     {% for u in users %}
     <tr class="{% if not u.active %}muted{% endif %}">
-      <td>{{ u.name }}</td><td>{{ L.ROLES[u.role] }}</td><td>{{ u.email }}</td>
-      <td>{{ '✓' if u.telegram_chat_id else '—' }}</td>
-      <td>{% if u.id != user.id %}<form method="post" action="/users/{{ u.id }}/toggle"><button class="btn btn-sm">{{ 'Отключить' if u.active else 'Включить' }}</button></form>{% endif %}</td>
+      <td>{{ u.name }}<div class="muted small">{{ L.ROLES[u.role] }}</div></td>
+      <td>{{ u.login }}</td>
+      <td>
+        {% if u.telegram_chat_id %}<span class="ok">✓ подключён</span>
+          {% if u.id != user.id %}<form method="post" action="/users/{{ u.id }}/tg-reset" class="inline-form"><button class="btn btn-sm">Сбросить</button></form>{% endif %}
+        {% elif tg_bot and u.tg_link_code %}
+          {% set link = 'https://t.me/' ~ tg_bot ~ '?start=' ~ u.tg_link_code %}
+          <input readonly value="{{ link }}" onclick="this.select()" class="small">
+          {% if u.phone %}<a class="btn btn-sm" target="_blank" href="https://wa.me/{{ u.login }}?text={{ ('Подключите уведомления по претензиям: откройте ссылку и нажмите «Запустить» ' ~ link)|urlencode }}">Отправить в WhatsApp</a>{% endif %}
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if u.id != user.id %}
+        <form method="post" action="/users/{{ u.id }}/toggle"><button class="btn btn-sm">{{ 'Отключить' if u.active else 'Включить' }}</button></form>
+        <details><summary class="small">Новый пароль</summary>
+          <form method="post" action="/users/{{ u.id }}/password" class="inline-form"><input name="password" minlength="8" required placeholder="от 8 символов"><button class="btn btn-sm">OK</button></form>
+        </details>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </table>
-  <p class="hint">Сотрудников не удаляем — отключаем, чтобы история в журнале сохранилась.</p>
+  <p class="hint">Сотрудников не удаляем — отключаем, чтобы история в журнале сохранилась. Ссылка Telegram одноразовая: сотрудник открывает её и нажимает «Запустить».</p>
 </section>
 <section class="card">
   <h2>Добавить</h2>
@@ -23,8 +40,8 @@
       <label>Роль <select name="role">{% for k, v in L.ROLES.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}</select></label>
     </div>
     <div class="grid2">
-      <label>Email (логин) <input type="email" name="email" required></label>
-      <label>Телефон <input name="phone"></label>
+      <label>Телефон (логин) <input name="phone" type="tel" required placeholder="+7 900 000-00-00"></label>
+      <label>Email (необязательно) <input type="email" name="email"></label>
     </div>
     <label>Временный пароль (от 8 символов) <input name="password" minlength="8" required></label>
     <button class="btn btn-primary">Добавить</button>

@@ -33,6 +33,14 @@
   - рейтинг причин и сотрудников;
   - выгрузка в CSV для Excel.
 
+## Сотрудники без почты
+
+- Вход по номеру телефона и паролю. Email у сотрудника не обязателен.
+- Все уведомления сотрудникам идут в Telegram: копии претензий со сканами и фото, ежедневные отметки кнопками, эскалации. В «Сотрудниках» у каждого есть одноразовая ссылка на бота и кнопка «Отправить в WhatsApp».
+- Клиенту без email: в карточке кнопки WhatsApp / Telegram / SMS. Открывается сообщение со ссылкой на статус, отправка фиксируется в журнале.
+- Подключение бота: `bash <(curl -fsSL https://raw.githubusercontent.com/dilessons-ux/pretenzii/main/deploy/telegram.sh)`.
+- Обновление: `curl -fsSL https://raw.githubusercontent.com/dilessons-ux/pretenzii/main/deploy/update.sh | bash`.
+
 ## Роли
 
 | Роль | Права |

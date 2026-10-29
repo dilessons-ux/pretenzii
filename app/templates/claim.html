@@ -26,7 +26,7 @@
   <h2>Клиент и договор</h2>
   <dl class="dl">
     <dt>Телефон</dt><dd><a href="tel:{{ c.client_phone }}">{{ c.client_phone }}</a></dd>
-    <dt>Email</dt><dd>{{ c.client_email or '— (письма не уходят, сообщать по телефону)' }}</dd>
+    <dt>Email</dt><dd>{{ c.client_email or '— (письма не уходят, отправляйте кнопками ниже)' }}</dd>
     <dt>Адрес</dt><dd>{{ c.address or '—' }}</dd>
     <dt>Договор</dt><dd>№ {{ c.contract_no }} от {{ fmt(c.contract_date) }} · {{ L.CONTRACT_TYPES[c.contract_type] }}{% if c.contract_price %} · {{ c.contract_price|money }}{% endif %}</dd>
     <dt>Дата претензии</dt><dd>{{ fmt(c.received_at) }}</dd>
@@ -36,6 +36,14 @@
     {% if c.culprit %}<dt>Виновник</dt><dd>{{ L.CULPRITS[c.culprit] }}</dd>{% endif %}
     <dt>Ссылка клиента</dt><dd><input readonly value="{{ client_link }}" onclick="this.select()"></dd>
   </dl>
+  <div class="share">
+    <span class="muted small">Отправить клиенту текущее сообщение со ссылкой на статус:</span>
+    <div class="btns">
+      <a class="btn btn-sm" href="/claims/{{ c.id }}/share/wa" target="_blank">WhatsApp</a>
+      <a class="btn btn-sm" href="/claims/{{ c.id }}/share/tg" target="_blank">Telegram</a>
+      <a class="btn btn-sm" href="/claims/{{ c.id }}/share/sms">SMS</a>
+    </div>
+  </div>
 </section>
 
 {# ---------- ежедневная отметка ---------- #}
@@ -209,7 +217,7 @@
 {# ---------- участники ---------- #}
 <section class="card">
   <h2>Участники</h2>
-  <ul class="plain">{% for p in ppl %}<li>{{ p.name }} — {{ L.ROLES[p.p_role] }}{% if not p.telegram_chat_id %} <span class="muted small">(без Telegram, напоминания на email)</span>{% endif %}</li>{% endfor %}</ul>
+  <ul class="plain">{% for p in ppl %}<li>{{ p.name }} — {{ L.ROLES[p.p_role] }}{% if not p.telegram_chat_id %} <span class="red small">(не подключён Telegram — уведомления не доходят)</span>{% endif %}</li>{% endfor %}</ul>
   {% if manage %}
   <form method="post" action="/claims/{{ c.id }}/participants" class="inline-form">
     <select name="user_id">{% for s in staff %}<option value="{{s.id}}">{{ s.name }} ({{ L.ROLES[s.role] }})</option>{% endfor %}</select>

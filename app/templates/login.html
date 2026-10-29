@@ -3,7 +3,7 @@
 {% block content %}
 <form method="post" action="/login" class="card narrow">
   <h1>Претензии · вход</h1>
-  <label>Email <input type="email" name="email" required autofocus></label>
+  <label>Телефон или email <input name="login" required autofocus inputmode="tel" placeholder="+7 900 000-00-00"></label>
   <label>Пароль <input type="password" name="password" required></label>
   <button class="btn btn-primary">Войти</button>
 </form>

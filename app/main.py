@@ -38,12 +38,26 @@ def check_pw(pw: str, stored: str) -> bool:
     return hmac.compare_digest(hash_pw(pw, salt), stored)
 
 
+def norm_login(v: str) -> str:
+    """Телефон → 7XXXXXXXXXX, email → нижний регистр."""
+    v = (v or "").strip().lower()
+    if "@" in v:
+        return v
+    d = "".join(ch for ch in v if ch.isdigit())
+    if len(d) == 11 and d[0] == "8":
+        d = "7" + d[1:]
+    if len(d) == 10:
+        d = "7" + d
+    return d
+
+
 def bootstrap_admin():
     email, pw = os.getenv("ADMIN_EMAIL"), os.getenv("ADMIN_PASSWORD")
     with tx() as c:
         if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0 and email and pw:
-            c.execute("INSERT INTO users (name, email, role, password_hash, created_at) VALUES (?,?,?,?,?)",
-                      (os.getenv("ADMIN_NAME", "Директор"), email.lower(), "director", hash_pw(pw), now_iso()))
+            c.execute("INSERT INTO users (name, login, email, role, password_hash, created_at) VALUES (?,?,?,?,?,?)",
+                      (os.getenv("ADMIN_NAME", "Директор"), email.lower(), email.lower(), "director", hash_pw(pw),
+                       now_iso()))
 
 
 @asynccontextmanager
@@ -130,11 +144,12 @@ def login_page(request: Request):
 
 
 @app.post("/login")
-def login(request: Request, email: str = Form(...), password: str = Form(...)):
+def login(request: Request, login: str = Form(...), password: str = Form(...)):
+    key = norm_login(login)
     with tx() as c:
-        u = c.execute("SELECT * FROM users WHERE email=? AND active=1", (email.strip().lower(),)).fetchone()
+        u = c.execute("SELECT * FROM users WHERE (login=? OR email=?) AND active=1", (key, key)).fetchone()
     if not u or not check_pw(password, u["password_hash"]):
-        flash(request, "Неверный email или пароль", "err")
+        flash(request, "Неверный телефон/email или пароль", "err")
         return RedirectResponse("/login", 303)
     request.session["uid"] = u["id"]
     return RedirectResponse("/", 303)
@@ -442,6 +457,31 @@ def change_status(request: Request, cid: int, status: str = Form(...), reason: s
     return RedirectResponse(f"/claims/{cid}", 303)
 
 
+@app.get("/claims/{cid}/share/{channel}")
+def share_client(request: Request, cid: int, channel: str):
+    """Сообщение клиенту с телефона сотрудника: WhatsApp / Telegram / SMS. Факт фиксируется в журнале."""
+    user = current_user(request)
+    from urllib.parse import quote
+    with tx() as c:
+        claim = get_claim(c, cid)
+        kind = S.current_letter_kind(c, claim)
+        subj, body = S.letter_text(c, claim, kind)
+        text = f"{subj}\n\n{body}"
+        phone = norm_login(claim["client_phone"])
+        names = {"wa": "WhatsApp", "tg": "Telegram", "sms": "SMS"}
+        if channel not in names:
+            raise HTTPException(400)
+        audit(c, cid, user, f"сообщение клиенту через {names[channel]}", "letter", None, subj,
+              "открыто на устройстве сотрудника")
+    if channel == "wa":
+        url = f"https://wa.me/{phone}?text={quote(text)}"
+    elif channel == "tg":
+        url = f"https://t.me/+{phone}"
+    else:
+        url = f"sms:+{phone}?&body={quote(text)}"
+    return RedirectResponse(url, 303)
+
+
 # ---------------- страница клиента ----------------
 
 def client_claim(c, token):
@@ -526,26 +566,51 @@ def client_survey(token: str, csat: int = Form(...), solved: int = Form(...), co
 def users_page(request: Request):
     user = current_user(request, ("director",))
     with tx() as c:
+        for u in c.execute("SELECT id FROM users WHERE tg_link_code IS NULL AND telegram_chat_id IS NULL").fetchall():
+            c.execute("UPDATE users SET tg_link_code=? WHERE id=?", (secrets.token_urlsafe(9), u["id"]))
         users = c.execute("SELECT * FROM users ORDER BY active DESC, role, name").fetchall()
-    return render(request, "users.html", user, users=users)
+    return render(request, "users.html", user, users=users, tg_bot=TG_BOT_NAME)
 
 
 @app.post("/users")
-def users_add(request: Request, name: str = Form(...), email: str = Form(...), role: str = Form(...),
-              phone: str = Form(""), password: str = Form(...)):
+def users_add(request: Request, name: str = Form(...), phone: str = Form(...), role: str = Form(...),
+              email: str = Form(""), password: str = Form(...)):
     current_user(request, ("director",))
-    if role not in L.ROLES or len(password) < 8:
-        flash(request, "Пароль не короче 8 символов", "err")
+    login_key = norm_login(phone)
+    if role not in L.ROLES or len(password) < 8 or len(login_key) != 11:
+        flash(request, "Проверьте телефон (11 цифр) и пароль (не короче 8 символов)", "err")
         return RedirectResponse("/users", 303)
     with tx() as c:
         try:
-            c.execute("INSERT INTO users (name, email, phone, role, password_hash, tg_link_code, created_at)"
-                      " VALUES (?,?,?,?,?,?,?)", (name.strip(), email.strip().lower(), phone.strip() or None, role,
-                                                 hash_pw(password), secrets.token_urlsafe(9), now_iso()))
+            c.execute("INSERT INTO users (name, login, email, phone, role, password_hash, tg_link_code, created_at)"
+                      " VALUES (?,?,?,?,?,?,?,?)", (name.strip(), login_key, email.strip().lower() or None,
+                                                   phone.strip(), role, hash_pw(password), secrets.token_urlsafe(9),
+                                                   now_iso()))
         except Exception:
-            flash(request, "Такой email уже есть", "err")
+            flash(request, "Сотрудник с таким телефоном уже есть", "err")
             return RedirectResponse("/users", 303)
-    flash(request, f"Сотрудник {name} добавлен")
+    flash(request, f"Сотрудник {name} добавлен. Отправьте ему ссылку на Telegram-бота из таблицы.")
+    return RedirectResponse("/users", 303)
+
+
+@app.post("/users/{uid}/password")
+def users_reset_pw(request: Request, uid: int, password: str = Form(...)):
+    current_user(request, ("director",))
+    if len(password) < 8:
+        flash(request, "Пароль не короче 8 символов", "err")
+    else:
+        with tx() as c:
+            c.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pw(password), uid))
+        flash(request, "Пароль изменён")
+    return RedirectResponse("/users", 303)
+
+
+@app.post("/users/{uid}/tg-reset")
+def users_tg_reset(request: Request, uid: int):
+    current_user(request, ("director",))
+    with tx() as c:
+        c.execute("UPDATE users SET telegram_chat_id=NULL, tg_link_code=? WHERE id=?", (secrets.token_urlsafe(9), uid))
+    flash(request, "Привязка Telegram сброшена, выдана новая ссылка")
     return RedirectResponse("/users", 303)
 
 

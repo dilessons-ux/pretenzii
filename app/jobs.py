@@ -38,7 +38,7 @@ def daily_reminders(c, today):
                 send_telegram(p["telegram_chat_id"],
                               f"Ежедневная отметка по претензии\n{_claim_line(claim, today)}\n"
                               f"Что сделано сегодня и какое решение принято?", STATE_BTNS(claim["id"]))
-            else:
+            elif p["email"]:
                 digest.setdefault(p["id"], [p, []])[1].append(claim)
             audit(c, claim["id"], "система", "напоминание отправлено", None, None, p["name"])
     for _, (user, items) in digest.items():

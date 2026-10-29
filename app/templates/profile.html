@@ -2,13 +2,13 @@
 {% block title %}Профиль{% endblock %}
 {% block content %}
 <h1>{{ user.name }}</h1>
-<p class="muted">{{ L.ROLES[user.role] }} · {{ user.email }}</p>
+<p class="muted">{{ L.ROLES[user.role] }} · вход: {{ user.login }}</p>
 <section class="card">
   <h2>Telegram</h2>
   {% if user.telegram_chat_id %}<p class="ok">Привязан. Напоминания приходят в Telegram.</p>
   {% elif tg_link %}<p>Откройте ссылку на телефоне и нажмите «Start» — напоминания будут приходить в Telegram с кнопками.</p>
     <p><a class="btn btn-primary" href="{{ tg_link }}">Привязать Telegram</a></p>
-  {% else %}<p class="muted">Бот ещё не настроен администратором. Напоминания приходят на email.</p>{% endif %}
+  {% else %}<p class="muted">Бот ещё не настроен администратором.</p>{% endif %}
 </section>
 <section class="card">
   <h2>Сменить пароль</h2>

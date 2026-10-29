@@ -68,7 +68,25 @@ def summary(claim) -> str:
 
 # ---------- письма клиенту ----------
 
-def client_letter(c, claim, kind: str, extra: dict | None = None):
+def current_letter_kind(c, claim) -> str:
+    st = claim["status"]
+    if st == "review":
+        return "accepted"
+    if st == "waiting_consent":
+        return "extension"
+    if st == "rejected":
+        return "rejected"
+    if st == "done":
+        return "done"
+    if st in ("closed", "feedback") or claim["client_confirmed_at"]:
+        return "survey"
+    return "decision" if claim["decision"] else "accepted"
+
+
+def letter_text(c, claim, kind: str, extra: dict | None = None) -> tuple[str, str]:
+    if kind == "extension" and not extra:
+        e = c.execute("SELECT * FROM extensions WHERE claim_id=? ORDER BY id DESC LIMIT 1", (claim["id"],)).fetchone()
+        extra = {"reason": e["reason"], "supply_date": e["supply_date"], "proposed_due": e["proposed_due"]} if e else {}
     extra = extra or {}
     link = client_url(claim)
     sign = f"\n\nС уважением,\n{COMPANY}"
@@ -105,10 +123,14 @@ def client_letter(c, claim, kind: str, extra: dict | None = None):
                 f"Пожалуйста, ответьте на 2 вопроса (1 минута): {link}")
     else:
         raise ValueError(kind)
-    body += sign
+    return subj, body + sign
+
+
+def client_letter(c, claim, kind: str, extra: dict | None = None):
+    subj, body = letter_text(c, claim, kind, extra)
     ok = send_email(claim["client_email"], subj, body) if claim["client_email"] else False
     audit(c, claim["id"], "система", "письмо клиенту" if ok else "письмо клиенту НЕ отправлено",
-          "letter", None, subj, None if ok else "нет email клиента или ошибка отправки — сообщить по телефону")
+          "letter", None, subj, None if ok else "нет email клиента — отправьте кнопкой WhatsApp / Telegram / SMS в карточке")
     return ok
 
 

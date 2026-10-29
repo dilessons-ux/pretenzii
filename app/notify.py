@@ -100,8 +100,32 @@ def send_telegram(chat_id: str | None, text: str, buttons: list[list[tuple[str, 
         return False
 
 
-def notify_user(user, subject: str, text: str, buttons=None, attachments=()):
-    """Сотруднику: Telegram, если привязан, иначе email. Важное (attachments) — всегда email."""
-    sent_tg = send_telegram(user["telegram_chat_id"], f"<b>{subject}</b>\n{text}", buttons)
-    if not sent_tg or attachments:
-        send_email(user["email"], subject, text, attachments)
+def send_tg_files(chat_id, attachments):
+    """Файлы претензии (скан, фото) в Telegram документами, до 20 МБ каждый."""
+    if not chat_id or not attachments:
+        return
+    for path, name in attachments:
+        if not os.path.exists(path) or os.path.getsize(path) > 20 * 1024 * 1024:
+            continue
+        if not TG_TOKEN:
+            _outbox("telegram-file", chat_id, name, path)
+            continue
+        try:
+            with open(path, "rb") as f:
+                httpx.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendDocument",
+                           data={"chat_id": chat_id}, files={"document": (name, f)}, timeout=60)
+        except Exception as e:
+            log.error("telegram file error %s: %s", chat_id, e)
+
+
+def notify_user(user, subject: str, text: str, buttons=None, attachments=()) -> bool:
+    """Сотруднику: Telegram (основной канал), если не привязан — email, если он указан."""
+    if user["telegram_chat_id"]:
+        ok = send_telegram(user["telegram_chat_id"], f"<b>{subject}</b>\n{text}", buttons)
+        if ok:
+            send_tg_files(user["telegram_chat_id"], attachments)
+            return True
+    if user["email"]:
+        return send_email(user["email"], subject, text, attachments)
+    _outbox("undelivered", user["name"], subject, "нет Telegram и email")
+    return False

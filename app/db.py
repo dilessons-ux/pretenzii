@@ -14,7 +14,8 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    login TEXT UNIQUE NOT NULL,      -- телефон (7XXXXXXXXXX) или email
+    email TEXT,
     phone TEXT,
     role TEXT NOT NULL,              -- director, np, rop, brigade, technolog, designer, supply, staff
     password_hash TEXT NOT NULL,
@@ -189,7 +190,36 @@ def tx():
         conn.close()
 
 
+def _migrate(c):
+    cols = [r[1] for r in c.execute("PRAGMA table_info(users)")]
+    if cols and "login" not in cols:
+        # Старая схема: вход по email (NOT NULL). Перестраиваем таблицу, данные сохраняем.
+        c.executescript("""
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE users_new (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, login TEXT UNIQUE NOT NULL, email TEXT, phone TEXT,
+            role TEXT NOT NULL, password_hash TEXT NOT NULL, telegram_chat_id TEXT, tg_link_code TEXT,
+            active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
+        INSERT INTO users_new (id, name, login, email, phone, role, password_hash, telegram_chat_id, tg_link_code,
+                               active, created_at)
+            SELECT id, name, email, email, phone, role, password_hash, telegram_chat_id, tg_link_code, active, created_at
+            FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+        PRAGMA foreign_keys = ON;
+        """)
+    ccols = [r[1] for r in c.execute("PRAGMA table_info(claims)")]
+    if ccols and "csat_at" not in ccols:
+        c.execute("ALTER TABLE claims ADD COLUMN csat_at TEXT")
+
+
 def init_db():
+    conn = connect()
+    try:
+        _migrate(conn)
+        conn.commit()
+    finally:
+        conn.close()
     with tx() as c:
         c.executescript(SCHEMA)
 

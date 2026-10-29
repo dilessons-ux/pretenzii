@@ -54,3 +54,4 @@ label.inline input,.stars input{width:auto;display:inline;margin:0}
 .bar{display:grid;grid-template-columns:150px 1fr 32px;gap:8px;align-items:center;margin:6px 0;font-size:14px}.bar i{display:block;height:10px;background:var(--accent);border-radius:5px}
 details summary{cursor:pointer;color:var(--accent);margin:6px 0}
 @media (max-width:600px){.grid2{grid-template-columns:1fr}.dl{grid-template-columns:1fr}.dl dt{margin-top:6px}.row{flex-direction:column}.row-side{text-align:left}.bar{grid-template-columns:110px 1fr 28px}}
+.share{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
