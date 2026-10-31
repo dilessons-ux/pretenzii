@@ -11,6 +11,13 @@
   {% else %}<p class="muted">Бот ещё не настроен администратором.</p>{% endif %}
 </section>
 <section class="card">
+  <h2>MAX</h2>
+  {% if max_linked %}<p class="ok">Привязан. Напоминания приходят в MAX.</p>
+  {% elif max_link %}<p>Откройте ссылку на телефоне и нажмите «Начать» — напоминания будут приходить в MAX с кнопками.</p>
+    <p><a class="btn btn-primary" href="{{ max_link }}">Привязать MAX</a></p>
+  {% else %}<p class="muted">Бот MAX ещё не настроен администратором.</p>{% endif %}
+</section>
+<section class="card">
   <h2>Сменить пароль</h2>
   <form method="post" action="/profile/password">
     <label>Текущий <input type="password" name="old" required></label>

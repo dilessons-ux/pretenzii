@@ -5,7 +5,7 @@
 {% if not tg_bot %}<div class="flash flash-warn">Telegram-бот ещё не подключён — уведомления сотрудникам не уходят. Подключение: одна команда на сервере (см. инструкцию).</div>{% endif %}
 <section class="card">
   <table class="tbl">
-    <tr><th>Сотрудник</th><th>Вход</th><th>Telegram</th><th></th></tr>
+    <tr><th>Сотрудник</th><th>Вход</th><th>Telegram</th><th>MAX</th><th></th></tr>
     {% for u in users %}
     <tr class="{% if not u.active %}muted{% endif %}">
       <td>{{ u.name }}<div class="muted small">{{ L.ROLES[u.role] }}</div></td>
@@ -20,7 +20,17 @@
         {% else %}—{% endif %}
       </td>
       <td>
+        {% set mi = max_info.get(u.id) %}
+        {% if mi and mi[0] %}<span class="ok">✓ подключён</span>
+          {% if u.id != user.id %}<form method="post" action="/users/{{ u.id }}/tg-reset" class="inline-form"><button class="btn btn-sm" title="Сбросит привязки Telegram и MAX">Сбросить всё</button></form>{% endif %}
+        {% elif max_bot and mi and mi[1] %}
+          {% set mlink = 'https://max.ru/' ~ max_bot ~ '/start/' ~ mi[1] %}
+          <input readonly value="{{ mlink }}" onclick="this.select()" class="small">
+        {% else %}—{% endif %}
+      </td>
+      <td>
         {% if u.id != user.id %}
+        {% if user.login == OWNER_LOGIN %}<form method="post" action="/users/{{ u.id }}/role" class="inline-form"><select name="role" onchange="this.form.submit()">{% for k, v in L.ROLES.items() %}<option value="{{k}}" {% if u.role==k %}selected{% endif %}>{{v}}</option>{% endfor %}</select></form>{% endif %}
         <form method="post" action="/users/{{ u.id }}/toggle"><button class="btn btn-sm">{{ 'Отключить' if u.active else 'Включить' }}</button></form>
         <details><summary class="small">Новый пароль</summary>
           <form method="post" action="/users/{{ u.id }}/password" class="inline-form"><input name="password" minlength="8" required placeholder="от 8 символов"><button class="btn btn-sm">OK</button></form>

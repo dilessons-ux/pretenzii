@@ -92,12 +92,23 @@ def send_telegram(chat_id: str | None, text: str, buttons: list[list[tuple[str, 
     if buttons:
         payload["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row]
                                                        for row in buttons]}
-    try:
-        res = tg_api("sendMessage", payload, timeout=15)
-        return bool(res and res.get("ok"))
-    except Exception as e:
-        log.error("telegram error %s: %s", chat_id, e)
-        return False
+    last = None
+    for pause in (0, 2, 5):
+        if pause:
+            import time as _t
+            _t.sleep(pause)
+        try:
+            res = tg_api("sendMessage", payload, timeout=15)
+            if res and res.get("ok"):
+                return True
+            last = res
+            if res and res.get("error_code") not in (429, 500, 502, 503, 504):
+                break
+        except Exception as e:
+            last = e
+    log.error("telegram error %s: %s", chat_id, last)
+    _outbox("telegram-failed", chat_id, "", f"{last}\n\n{text}")
+    return False
 
 
 def send_tg_files(chat_id, attachments):
@@ -118,7 +129,78 @@ def send_tg_files(chat_id, attachments):
             log.error("telegram file error %s: %s", chat_id, e)
 
 
+MAX_TOKEN = os.getenv("MAX_BOT_TOKEN", "")
+MAX_API = os.getenv("MAX_API_BASE", "https://platform-api.max.ru")
+
+
+def max_api(method: str, path: str, params=None, payload=None, timeout=35):
+    """Возвращает (http_status, json). Без токена — (0, {})."""
+    if not MAX_TOKEN:
+        return 0, {}
+    r = httpx.request(method, f"{MAX_API}{path}", params=params, json=payload,
+                      headers={"Authorization": MAX_TOKEN}, timeout=timeout)
+    try:
+        data = r.json()
+    except Exception:
+        data = {}
+    return r.status_code, data
+
+
+def send_max(user_id, subject: str, text: str, buttons=None, attachments=()) -> bool:
+    if not user_id:
+        return False
+    body = f"<b>{subject}</b>\n{text}" if subject else text
+    if attachments:
+        body += "\n\nВложения смотрите в приложении претензий."
+    body = body[:4000]
+    if not MAX_TOKEN:
+        _outbox("max", user_id, subject, text)
+        return True
+    payload = {"text": body, "format": "html"}
+    if buttons:
+        payload["attachments"] = [{"type": "inline_keyboard", "payload": {"buttons": [
+            [{"type": "callback", "text": t, "payload": d} for t, d in row] for row in buttons]}}]
+    last = None
+    for pause in (0, 2, 5):
+        if pause:
+            import time as _t
+            _t.sleep(pause)
+        try:
+            st, data = max_api("POST", "/messages", params={"user_id": user_id}, payload=payload, timeout=15)
+            if st == 200:
+                return True
+            last = (st, data)
+            if st != 429:  # 5xx/прочее: исход неизвестен или отказ, повтор может дать дубль
+                break
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            last = e  # соединение не установлено, повтор безопасен
+        except Exception as e:
+            last = e
+            break
+    log.error("max error %s: %s", user_id, last)
+    _outbox("max-failed", user_id, subject, f"{last}\n\n{text}")
+    return False
+
+
+def _max_id(user):
+    try:
+        return user["max_user_id"] if "max_user_id" in user.keys() else None
+    except Exception:
+        return None
+
+
 def notify_user(user, subject: str, text: str, buttons=None, attachments=()) -> bool:
+    """Сотруднику: MAX и/или Telegram, что привязано; иначе email."""
+    sent = False
+    mid = _max_id(user)
+    if mid:
+        sent = send_max(mid, subject, text, buttons, attachments)
+    if user["telegram_chat_id"] or not sent:
+        return _notify_user_tg(user, subject, text, buttons, attachments) or sent
+    return sent
+
+
+def _notify_user_tg(user, subject: str, text: str, buttons=None, attachments=()) -> bool:
     """Сотруднику: Telegram (основной канал), если не привязан — email, если он указан."""
     if user["telegram_chat_id"]:
         ok = send_telegram(user["telegram_chat_id"], f"<b>{subject}</b>\n{text}", buttons)

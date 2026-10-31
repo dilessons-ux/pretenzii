@@ -22,7 +22,7 @@
   <fieldset>
     <legend>Договор</legend>
     <div class="grid2">
-      <label>Номер договора * <input name="contract_no" required></label>
+      <label>Номер договора * <span class="amo-row" style="display:flex;gap:8px"><input name="contract_no" required style="flex:1"><button type="button" id="amo-fetch" class="btn btn-sm">Подтянуть из amoCRM</button></span></label>
       <label>Дата заключения * <input name="contract_date" type="date" required></label>
     </div>
     <div class="grid2">
@@ -65,4 +65,70 @@
 
   <button class="btn btn-primary btn-lg">Зарегистрировать и разослать</button>
 </form>
+<script>
+(function () {
+  var f = document.querySelector('form[action="/claims/new"]');
+  var no = f.elements['contract_no'];
+  var btn = document.getElementById('amo-fetch');
+  var info = document.createElement('div');
+  info.className = 'hint';
+  no.closest('fieldset').appendChild(info);
+  var staffNames = {};
+  f.querySelectorAll('input[name="brigade"]').forEach(function (cb) {
+    staffNames[cb.value] = cb.parentNode.textContent.trim();
+  });
+  function say(text, bad) { info.textContent = text; info.style.color = bad ? '#b00020' : ''; }
+  function put(name, v) {
+    if (v === null || v === undefined || v === '') return;
+    var el = f.elements[name];
+    if (el) el.value = v;
+  }
+  function apply(o) {
+    put('client_name', o.client_name); put('client_phone', o.client_phone); put('client_email', o.client_email);
+    put('contract_date', o.contract_date); put('address', o.address); put('contract_price', o.price);
+    f.querySelectorAll('input[name="brigade"]').forEach(function (cb) { cb.checked = false; });
+    var names = [];
+    (o.brigade_ids || []).forEach(function (id) {
+      var cb = f.querySelector('input[name="brigade"][value="' + id + '"]');
+      if (cb) { cb.checked = true; names.push(staffNames[id]); }
+    });
+    var parts = ['Подтянуто из amoCRM: ' + (o.client_name || 'клиент')];
+    if (o.deal_name) parts.push('сделка «' + o.deal_name + '»');
+    if (o.install_date) parts.push('установка ' + o.install_date);
+    if (o.crew && o.crew.length) {
+      parts.push('бригада в amoCRM: ' + o.crew.join(', ') + (names.length ? ' → отмечены: ' + names.join(', ') : ''));
+      if (o.crew_missing && o.crew_missing.length) parts.push('не нашёл в сотрудниках: ' + o.crew_missing.join(', ') + ' — отметьте вручную');
+    } else {
+      parts.push('бригада в сделке не указана — отметьте сборщиков вручную');
+    }
+    say(parts.join(' · '), false);
+  }
+  btn.addEventListener('click', function () {
+    var n = no.value.trim();
+    if (!n) { say('Сначала введите номер договора', true); return; }
+    btn.disabled = true; say('Ищу в amoCRM…', false);
+    fetch('/api/amocrm/contract?number=' + encodeURIComponent(n), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        if (d.error) { say(d.error + '. Заполните поля вручную.', true); return; }
+        if (!d.found) { say('Договор «' + n + '» в amoCRM не найден. Заполните поля вручную.', true); return; }
+        if (d.options.length === 1) { apply(d.options[0]); return; }
+        var sel = document.createElement('select');
+        var first = document.createElement('option'); first.value = ''; first.textContent = '— выберите сделку —';
+        sel.appendChild(first);
+        d.options.forEach(function (o, i) {
+          var op = document.createElement('option');
+          op.value = i;
+          op.textContent = (o.client_name || '') + ' · ' + (o.deal_name || 'без сделки') + (o.install_date ? ' · установка ' + o.install_date : '');
+          sel.appendChild(op);
+        });
+        sel.addEventListener('change', function () { if (sel.value !== '') apply(d.options[+sel.value]); });
+        info.textContent = 'Найдено несколько вариантов: '; info.style.color = '';
+        info.appendChild(sel);
+      })
+      .catch(function () { btn.disabled = false; say('Не удалось связаться с приложением. Заполните поля вручную.', true); });
+  });
+})();
+</script>
 {% endblock %}

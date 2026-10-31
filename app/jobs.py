@@ -8,7 +8,7 @@ from datetime import timedelta
 from . import logic as L
 from . import services as S
 from .db import audit, job_once, now, tx
-from .notify import TG_TOKEN, notify_user, send_email, send_telegram, tg_api
+from .notify import MAX_TOKEN, TG_TOKEN, max_api, notify_user, send_email, send_max, send_telegram, tg_api
 
 log = logging.getLogger("jobs")
 
@@ -225,8 +225,110 @@ def bot_loop():
             time.sleep(5)
 
 
+# ---------------- MAX-бот ----------------
+
+def max_ensure_columns():
+    with tx() as c:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()}
+        for col in ("max_user_id", "max_link_code"):
+            if col not in cols:
+                c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+
+
+def _max_link(c, uid, code):
+    user = c.execute("SELECT * FROM users WHERE max_link_code=? AND active=1", (code,)).fetchone() if code else None
+    if user:
+        c.execute("UPDATE users SET max_user_id=?, max_link_code=NULL WHERE id=?", (uid, user["id"]))
+        send_max(uid, "", f"Готово, {user['name']}. Напоминания по претензиям будут приходить сюда.")
+    else:
+        send_max(uid, "", "Откройте ссылку привязки из своего профиля в приложении претензий.")
+
+
+def handle_max_update(upd):
+    kind = upd.get("update_type")
+    with tx() as c:
+        if kind == "message_callback":
+            cb = upd.get("callback") or {}
+            uid = str((cb.get("user") or {}).get("user_id", ""))
+            try:
+                max_api("POST", "/answers", params={"callback_id": cb.get("callback_id")},
+                        payload={"notification": "Принято"}, timeout=10)
+            except Exception:
+                pass
+            user = c.execute("SELECT * FROM users WHERE max_user_id=? AND active=1", (uid,)).fetchone()
+            if not user or not cb.get("payload"):
+                return
+            try:
+                _, cid, state = cb["payload"].split(":")
+            except ValueError:
+                return
+            c.execute("INSERT OR REPLACE INTO tg_pending (chat_id, claim_id, state) VALUES (?,?,?)",
+                      ("max:" + uid, int(cid), state))
+            prompt = {"done": "Напишите, что сделано и какое решение принято (или /skip):",
+                      "problem": "Опишите проблему:", "help": "Какая помощь нужна?"}.get(state, "Напишите комментарий:")
+            send_max(uid, "", prompt)
+            return
+        if kind == "bot_started":
+            uid = str((upd.get("user") or {}).get("user_id", ""))
+            if uid:
+                _max_link(c, uid, upd.get("payload") or "")
+            return
+        if kind != "message_created":
+            return
+        msg = upd.get("message") or {}
+        uid = str((msg.get("sender") or {}).get("user_id", ""))
+        text = ((msg.get("body") or {}).get("text") or "").strip()
+        if not uid or not text:
+            return
+        if text.startswith("/start"):
+            code = text.split(maxsplit=1)[1] if " " in text else ""
+            _max_link(c, uid, code)
+            return
+        pend = c.execute("SELECT * FROM tg_pending WHERE chat_id=?", ("max:" + uid,)).fetchone()
+        user = c.execute("SELECT * FROM users WHERE max_user_id=? AND active=1", (uid,)).fetchone()
+        if not pend or not user:
+            send_max(uid, "", "Используйте кнопки под напоминанием.")
+            return
+        if pend["state"] in ("problem", "help") and text == "/skip":
+            send_max(uid, "", "Здесь нужен комментарий — опишите ситуацию.")
+            return
+        claim = c.execute("SELECT * FROM claims WHERE id=?", (pend["claim_id"],)).fetchone()
+        S.record_checkin(c, user, claim, pend["state"], None if text == "/skip" else text)
+        c.execute("DELETE FROM tg_pending WHERE chat_id=?", ("max:" + uid,))
+        send_max(uid, "", f"Записал в журнал претензии {claim['number']}. Спасибо.")
+
+
+def max_loop():
+    marker = None
+    while True:
+        try:
+            params = {"timeout": 30, "limit": 100}
+            if marker is not None:
+                params["marker"] = marker
+            st, data = max_api("GET", "/updates", params=params, timeout=45)
+            if st != 200:
+                log.error("max polling status %s: %s", st, data)
+                time.sleep(10)
+                continue
+            marker = data.get("marker", marker)
+            for upd in data.get("updates", []):
+                try:
+                    handle_max_update(upd)
+                except Exception:
+                    log.exception("max update error")
+        except Exception:
+            log.exception("max polling error")
+            time.sleep(5)
+
+
 def start_background():
+    try:
+        max_ensure_columns()
+    except Exception:
+        log.exception("max columns")
     if os.getenv("RUN_JOBS", "1") == "1":
         threading.Thread(target=scheduler_loop, daemon=True, name="scheduler").start()
+        if MAX_TOKEN:
+            threading.Thread(target=max_loop, daemon=True, name="max-bot").start()
         if TG_TOKEN:
             threading.Thread(target=bot_loop, daemon=True, name="tgbot").start()

@@ -25,6 +25,7 @@ os.makedirs(S.UPLOAD_DIR, exist_ok=True)
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".pdf", ".mp4", ".mov", ".doc", ".docx"}
 MAX_FILE_MB = 50
 TG_BOT_NAME = os.getenv("TELEGRAM_BOT_NAME", "")
+MAX_BOT_NAME = os.getenv("MAX_BOT_NAME", "")
 
 
 def hash_pw(pw: str, salt: str | None = None) -> str:
@@ -73,6 +74,9 @@ app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY") or secr
                    max_age=60 * 60 * 24 * 30, https_only=os.getenv("COOKIE_SECURE", "1") == "1")
 app.mount("/static", StaticFiles(directory=os.path.join(BASE, "static")), name="static")
 tpl = Jinja2Templates(directory=os.path.join(BASE, "templates"))
+# --- roles-owner-patch ---
+OWNER_LOGIN = (os.getenv("ADMIN_EMAIL", "") or "").strip().lower()
+tpl.env.globals["OWNER_LOGIN"] = OWNER_LOGIN
 tpl.env.globals.update(L=L, fmt=S.fmt)
 tpl.env.filters["money"] = lambda v: f"{(v or 0):,.0f}".replace(",", " ") + " ₽"
 
@@ -569,13 +573,20 @@ def users_page(request: Request):
         for u in c.execute("SELECT id FROM users WHERE tg_link_code IS NULL AND telegram_chat_id IS NULL").fetchall():
             c.execute("UPDATE users SET tg_link_code=? WHERE id=?", (secrets.token_urlsafe(9), u["id"]))
         users = c.execute("SELECT * FROM users ORDER BY active DESC, role, name").fetchall()
-    return render(request, "users.html", user, users=users, tg_bot=TG_BOT_NAME)
+    with tx() as c:
+        for r in c.execute("SELECT id FROM users WHERE max_link_code IS NULL AND max_user_id IS NULL").fetchall():
+            c.execute("UPDATE users SET max_link_code=? WHERE id=?", (secrets.token_urlsafe(9), r["id"]))
+        max_info = {r["id"]: (r["max_user_id"], r["max_link_code"])
+                    for r in c.execute("SELECT id, max_user_id, max_link_code FROM users").fetchall()}
+    return render(request, "users.html", user, users=users, tg_bot=TG_BOT_NAME, max_info=max_info, max_bot=MAX_BOT_NAME)
 
 
 @app.post("/users")
 def users_add(request: Request, name: str = Form(...), phone: str = Form(...), role: str = Form(...),
               email: str = Form(""), password: str = Form(...)):
-    current_user(request, ("director",))
+    _me = current_user(request, ("director",))
+    if role == "director" and _me["login"] != OWNER_LOGIN:
+        raise HTTPException(403)
     login_key = norm_login(phone)
     if role not in L.ROLES or len(password) < 8 or len(login_key) != 11:
         flash(request, "Проверьте телефон (11 цифр) и пароль (не короче 8 символов)", "err")
@@ -610,7 +621,26 @@ def users_tg_reset(request: Request, uid: int):
     current_user(request, ("director",))
     with tx() as c:
         c.execute("UPDATE users SET telegram_chat_id=NULL, tg_link_code=? WHERE id=?", (secrets.token_urlsafe(9), uid))
+        c.execute("UPDATE users SET max_user_id=NULL, max_link_code=? WHERE id=?", (secrets.token_urlsafe(9), uid))
     flash(request, "Привязка Telegram сброшена, выдана новая ссылка")
+    return RedirectResponse("/users", 303)
+
+
+@app.post("/users/{uid}/role")
+def users_role(request: Request, uid: int, role: str = Form(...)):
+    me = current_user(request, ("director",))
+    if not OWNER_LOGIN or me["login"] != OWNER_LOGIN:
+        raise HTTPException(403)
+    if role not in L.ROLES or uid == me["id"]:
+        raise HTTPException(400)
+    with tx() as c:
+        old = c.execute("SELECT name, role FROM users WHERE id=?", (uid,)).fetchone()
+        if not old:
+            raise HTTPException(404)
+        c.execute("UPDATE users SET role=? WHERE id=?", (role, uid))
+    import logging
+    logging.getLogger("roles").warning("role change: %s (%s) %s -> %s by %s", old["name"], uid, old["role"], role, me["login"])
+    flash(request, f"{old['name']}: роль изменена на «{L.ROLES[role]}»")
     return RedirectResponse("/users", 303)
 
 
@@ -631,8 +661,20 @@ def profile(request: Request):
         with tx() as c:
             c.execute("UPDATE users SET tg_link_code=? WHERE id=?", (secrets.token_urlsafe(9), user["id"]))
         user = current_user(request)
+    max_link, max_linked = None, False
+    if MAX_BOT_NAME:
+        with tx() as c:
+            row = c.execute("SELECT max_user_id, max_link_code FROM users WHERE id=?", (user["id"],)).fetchone()
+            if row["max_user_id"]:
+                max_linked = True
+            else:
+                code = row["max_link_code"]
+                if not code:
+                    code = secrets.token_urlsafe(9)
+                    c.execute("UPDATE users SET max_link_code=? WHERE id=?", (code, user["id"]))
+                max_link = f"https://max.ru/{MAX_BOT_NAME}/start/{code}"
     tg_link = f"https://t.me/{TG_BOT_NAME}?start={user['tg_link_code']}" if TG_BOT_NAME and user["tg_link_code"] else None
-    return render(request, "profile.html", user, tg_link=tg_link)
+    return render(request, "profile.html", user, tg_link=tg_link, max_link=max_link, max_linked=max_linked)
 
 
 @app.post("/profile/password")
@@ -645,6 +687,21 @@ def change_pw(request: Request, old: str = Form(...), new: str = Form(...)):
             c.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pw(new), user["id"]))
         flash(request, "Пароль изменён")
     return RedirectResponse("/profile", 303)
+
+
+# --- amocrm-patch ---
+@app.get("/api/amocrm/contract")
+def amocrm_contract(request: Request, number: str = ""):
+    current_user(request)
+    from fastapi.responses import JSONResponse
+    from . import amocrm
+    with tx() as c:
+        staff = [(r["id"], r["name"]) for r in
+                 c.execute("SELECT id, name FROM users WHERE active=1 AND role='brigade'").fetchall()]
+    try:
+        return JSONResponse(amocrm.lookup(number, staff))
+    except amocrm.AmoError as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
 
 
 # ---------------- дашборд и выгрузка ----------------
